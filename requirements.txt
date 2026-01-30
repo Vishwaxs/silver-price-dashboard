@@ -1,7 +1,7 @@
-streamlit>=1.44.2
-pandas>=2.2.3
-altair>=5.5.0
-plotly>=5.24.1
-geopandas>=0.15.4
-matplotlib>=3.8.0
-shapely>=2.1.3
+streamlit
+pandas
+matplotlib
+geopandas
+shapely==2.1.2
+fiona
+pyproj

@@ -1,6 +1,5 @@
 import streamlit as st
 import pandas as pd
-import geopandas as gpd
 import matplotlib.pyplot as plt
 
 
@@ -8,14 +7,9 @@ st.set_page_config(page_title="Silver Price & Sales Dashboard", layout="wide")
 
 price_df = pd.read_csv("historical_silver_price.csv")
 sales_df = pd.read_csv("state_wise_silver_purchased_kg.csv")
-india_map = gpd.read_file("shapefile/State_Capitals.shp")
 
-state_col = None
-for col in india_map.columns:
-    if "state" in col.lower():
-        state_col = col
-        break
 
+# ================= SIDEBAR =================
 st.sidebar.header("Silver Price Calculator")
 
 weight = st.sidebar.number_input("Weight of Silver", min_value=0.0, step=1.0)
@@ -27,13 +21,13 @@ usd_rate = 83.0
 
 weight_in_grams = weight if unit == "grams" else weight * 1000
 total_cost_inr = weight_in_grams * price_per_gram
-
 total_cost = total_cost_inr / usd_rate if currency == "USD" else total_cost_inr
 
 st.sidebar.subheader("Total Cost")
 st.sidebar.write(f"{currency} {total_cost:,.2f}")
 
 
+# ================= PRICE ANALYSIS =================
 st.header("Historical Silver Price Analysis")
 
 price_filter = st.selectbox(
@@ -60,36 +54,10 @@ plt.xticks(rotation=90)
 st.pyplot(fig)
 
 
-st.header("India State-wise Silver Purchases")
-
-sales_state = sales_df.groupby("State")["Silver_Purchased_kg"].sum().reset_index()
-
-
-merged_map = india_map.merge(
-    sales_state,
-    left_on=state_col,
-    right_on="State",
-    how="left"
-)
-
-
-
-
-fig, ax = plt.subplots(figsize=(10, 10))
-merged_map.plot(
-    column="Silver_Purchased_kg",
-    cmap="Greys",
-    legend=True,
-    ax=ax,
-    edgecolor="black"
-)
-ax.set_title("State-wise Silver Purchases (kg)")
-ax.axis("off")
-st.pyplot(fig)
-
+# ================= TOP 5 STATES =================
 st.header("Top 5 States – Silver Purchases")
 
-top5 = sales_state.sort_values(
+top5 = sales_df.sort_values(
     "Silver_Purchased_kg", ascending=False
 ).head(5)
 
@@ -101,8 +69,8 @@ ax.set_title("Top 5 Silver Consuming States")
 st.pyplot(fig)
 
 
+# ================= JANUARY SALES =================
 st.header("State-wise Silver Sales – January")
-
 
 qty_col = None
 for col in sales_df.columns:
@@ -113,7 +81,6 @@ for col in sales_df.columns:
 if qty_col is None:
     st.error("Silver quantity column not found in dataset.")
     st.stop()
-
 
 total_january_sales = sales_df[qty_col].sum()
 

@@ -1,13 +1,45 @@
 import streamlit as st
 import pandas as pd
+import geopandas as gpd
 import matplotlib.pyplot as plt
+from pathlib import Path
 
 
 st.set_page_config(page_title="Silver Price & Sales Dashboard", layout="wide")
 
-price_df = pd.read_csv("historical_silver_price.csv")
-sales_df = pd.read_csv("state_wise_silver_purchased_kg.csv")
+BASE_DIR = Path(__file__).resolve().parent
 
+
+@st.cache_data
+def load_price_data() -> pd.DataFrame:
+    return pd.read_csv(BASE_DIR / "historical_silver_price.csv")
+
+
+@st.cache_data
+def load_sales_data() -> pd.DataFrame:
+    return pd.read_csv(BASE_DIR / "state_wise_silver_purchased_kg.csv")
+
+
+@st.cache_data
+def load_india_boundary() -> gpd.GeoDataFrame:
+    return gpd.read_file(BASE_DIR / "shapefile" / "india_India_Country_Boundary.geojson")
+
+
+@st.cache_data
+def load_state_capitals() -> gpd.GeoDataFrame:
+    return gpd.read_file(BASE_DIR / "shapefile" / "State_Capitals.shp")
+
+
+price_df = load_price_data()
+sales_df = load_sales_data()
+india_capitals = load_state_capitals()
+india_boundary = load_india_boundary()
+
+capitals_code_col = None
+for col in india_capitals.columns:
+    if col.lower() == "state":
+        capitals_code_col = col
+        break
 
 # ================= SIDEBAR =================
 st.sidebar.header("Silver Price Calculator")
@@ -52,6 +84,121 @@ ax.set_ylabel("Price (INR per kg)")
 ax.set_title("Silver Price Trend")
 plt.xticks(rotation=90)
 st.pyplot(fig)
+
+
+# ================= INDIA MAP =================
+st.header("India State-wise Silver Purchases")
+if capitals_code_col is None:
+    st.error("Could not find a 'state' code column in State_Capitals.shp")
+    st.stop()
+
+
+def normalize_state_name(value: str) -> str:
+    value = str(value or "").strip()
+    value = " ".join(value.split())
+    return value
+
+
+# Your State_Capitals.shp is a *points* layer (capitals), not state polygons.
+# So instead of a choropleth fill, we plot the India boundary + capital points
+# sized/colored by the 'Silver_Purchased_kg' value.
+STATE_NAME_TO_CODE = {
+    "Andhra Pradesh": "AP",
+    "Arunachal Pradesh": "AR",
+    "Assam": "AS",
+    "Bihar": "BR",
+    "Chhattisgarh": "CG",
+    "Goa": "GA",
+    "Gujarat": "GJ",
+    "Haryana": "HR",
+    "Himachal Pradesh": "HP",
+    "Jharkhand": "JH",
+    "Karnataka": "KA",
+    "Kerala": "KL",
+    "Madhya Pradesh": "MP",
+    "Maharashtra": "MH",
+    "Manipur": "MN",
+    "Meghalaya": "ML",
+    "Mizoram": "MZ",
+    "Nagaland": "NL",
+    "Odisha": "OR",
+    "Punjab": "PB",
+    "Rajasthan": "RJ",
+    "Sikkim": "SK",
+    "Tamil Nadu": "TN",
+    "Telangana": "TG",
+    "Tripura": "TR",
+    "Uttar Pradesh": "UP",
+    "Uttarakhand": "UK",
+    "West Bengal": "WB",
+    "Delhi": "DL",
+    "Jammu & Kashmir": "JK",
+    "Jammu and Kashmir": "JK",
+    "Ladakh": "LA",
+}
+
+sales_df = sales_df.copy()
+sales_df["State"] = sales_df["State"].map(normalize_state_name)
+sales_df["state_code"] = sales_df["State"].map(STATE_NAME_TO_CODE)
+
+missing_state_codes = sales_df[sales_df["state_code"].isna()]["State"].unique().tolist()
+if missing_state_codes:
+    st.warning(
+        "Some state names couldn't be mapped to the shapefile state codes. "
+        f"Missing: {', '.join(missing_state_codes)}"
+    )
+
+capitals = india_capitals[[capitals_code_col, "geometry"]].copy()
+capitals = capitals.rename(columns={capitals_code_col: "state_code"})
+
+merged_map = capitals.merge(
+    sales_df[["State", "state_code", "Silver_Purchased_kg"]],
+    on="state_code",
+    how="left",
+)
+
+try:
+    # Ensure consistent CRS for plotting
+    if india_boundary.crs is None:
+        india_boundary = india_boundary.set_crs("EPSG:4326")
+    if merged_map.crs is None:
+        merged_map = merged_map.set_crs(india_capitals.crs or "EPSG:4326")
+
+    india_boundary = india_boundary.to_crs("EPSG:4326")
+    merged_map = merged_map.to_crs("EPSG:4326")
+except Exception as exc:
+    st.error(f"Failed to reproject map layers: {exc}")
+    st.stop()
+
+
+fig, ax = plt.subplots(1, 1, figsize=(12, 10))
+india_boundary.plot(ax=ax, color="#F5F5F5", edgecolor="#222222", linewidth=0.8)
+
+plot_df = merged_map.dropna(subset=["Silver_Purchased_kg"]).copy()
+if plot_df.empty:
+    st.error("No sales data could be joined to the map (check state code mapping).")
+else:
+    # Bubble size scaling
+    max_val = float(plot_df["Silver_Purchased_kg"].max())
+    plot_df["_size"] = (plot_df["Silver_Purchased_kg"] / max_val).clip(0, 1) * 800 + 40
+
+    plot_df.plot(
+        ax=ax,
+        column="Silver_Purchased_kg",
+        cmap="Greys",
+        legend=True,
+        markersize=plot_df["_size"],
+        alpha=0.85,
+        edgecolor="black",
+        linewidth=0.5,
+    )
+
+ax.set_title("State/UT-wise Silver Purchases (kg) — capital point map")
+ax.axis("off")
+st.pyplot(fig)
+
+with st.expander("Show map join preview"):
+    st.dataframe(merged_map[["state_code", "State", "Silver_Purchased_kg"]])
 
 
 # ================= TOP 5 STATES =================
